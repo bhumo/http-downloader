@@ -12,6 +12,7 @@
 #include <openssl/err.h>
 #include <getopt.h>
 
+
 struct ssl_socket {
 
     int client_socket;
@@ -22,6 +23,16 @@ struct ssl_socket {
     int tls_connection_flag;
     const char *hostname;
     void (*initialise) (struct ssl_socket*);
+};
+
+
+struct ThreadArgument{
+    int partNumber;
+    size_t range_start;
+    size_t range_end;
+    char *hostname;
+    char *path;
+
 };
 
 void initialise_OpenSSLLib() {
@@ -174,7 +185,7 @@ char * create_header_request(char* hostname, char *path){
     return head_request;
 }
 
-void send_header_request( char *hostname,  char *path){
+int send_header_request( char *hostname,  char *path){
     struct ssl_socket* ssl = create_ssl_socket(hostname,443);
     char *head_request = create_header_request(hostname,path);
 
@@ -210,13 +221,85 @@ void send_header_request( char *hostname,  char *path){
     free(ssl->server_addr);
     free(ssl);
     free(head_request); // Free allocated memory
-    exit(EXIT_FAILURE);
-    
-
-    return;
+    return content_length;
 }
 
+char * get_range_request_header(char *hostname, char *path, size_t range_start,size_t range_end){
 
-void send_get_range_request(char *hostname, char *path){
+    int range_header_size = snprintf(NULL, 0, "Range: bytes=%zu-%zu\r\n", range_start, range_end);
     
+    printf("range_header_size: %d bytes\n", range_header_size);
+    
+    char *range_header = (char *)malloc(range_header_size + 1); // +1 for null terminator
+    if (range_header == NULL) {
+        perror("Memory allocation failed");
+        exit(EXIT_FAILURE);
+    }
+    // Format the Range header
+    snprintf(range_header, range_header_size + 1, "Range: bytes=%zu-%zu\r\n", range_start, range_end);
+
+
+    // Construct the GET request with the Range header
+    int get_request_size = snprintf(NULL, 0, "GET /%s HTTP/1.1\r\nHost: %s\r\n%s\r\n", path, hostname, range_header);
+    char *get_request = (char *)malloc(get_request_size + 2); // +1 for null terminator
+    if (get_request == NULL) {
+        perror("Memory allocation failed");
+        free(range_header);
+        exit(EXIT_FAILURE);
+    }
+        // Format the GET request
+    snprintf(get_request, get_request_size + 2, "GET /%s HTTP/1.1\r\nHost: %s\r\n%s\r\n", path, hostname, range_header);
+	printf("%s\n",get_request);
+    free(range_header);    
+    return get_request;
+
 }
+void *send_get_range_request(struct ThreadArgument *thread_argument){
+    printf("start**********************");
+    char *get_request = get_range_request_header(thread_argument->hostname,thread_argument->path, thread_argument->range_start,thread_argument->range_end);
+    printf("Got the request header");    
+    struct ssl_socket* ssl = create_ssl_socket(thread_argument->hostname,443);
+    // Perform the partial download
+    int bytes_written_ssl =  SSL_write(ssl->connection, get_request,strlen(get_request));;
+	if(bytes_written_ssl <=0 ){
+		printf("Some error occured while performing the SSL_WRITE\n");
+        free(get_request);
+        close(ssl->client_socket);
+        SSL_shutdown(ssl->connection);
+        SSL_free(ssl->connection);
+        SSL_CTX_free(ssl->context);
+        free(ssl->server_addr);
+        free(ssl);
+        return (void *) -1;
+	}else{
+		printf("Sent %d bytes\n",bytes_written_ssl);
+	}
+    int bytes_to_be_received = thread_argument->range_end - thread_argument->range_start +1;
+	char response_buffer[100+bytes_to_be_received];
+    int bytes_received;
+	bytes_received = SSL_read(ssl->connection, response_buffer, sizeof(response_buffer));
+	printf("%d\n",SSL_pending(ssl->connection));
+	printf("%d\n",bytes_received);
+	if(SSL_get_state(ssl->connection)==TLS_ST_OK){
+		printf("TLS is established\n");
+	}
+	int ssl_error = SSL_get_error(ssl->connection, bytes_received);
+
+    const char *error_string = ERR_error_string(ssl_error, NULL);
+    fprintf(stderr, "SSL_read error: %s\n", error_string);
+    while ((bytes_received = SSL_read(ssl->connection, response_buffer, sizeof(response_buffer))) > 0) {
+        fwrite(response_buffer, 1, bytes_received, stdout);	
+    }
+
+    // Free dynamically allocated memory
+    free(get_request);
+
+    close(ssl->client_socket);
+    SSL_shutdown(ssl->connection);
+    SSL_free(ssl->connection);
+    SSL_CTX_free(ssl->context);
+    free(ssl->server_addr);
+    free(ssl);
+    return NULL;
+}
+
