@@ -54,7 +54,8 @@ int main(int argc, char *argv[]){
     size_t remaining_bytes = content_length;
     int NUM_THREADS = num_parts;
     pthread_t threads[NUM_THREADS];
-    int thread_ids[NUM_THREADS];
+
+    
 
 
     // Create multiple threads to open TCP connections in parallel
@@ -67,23 +68,26 @@ int main(int argc, char *argv[]){
             end_offset = content_length - 1;
         }
         size_t current_part_size = end_offset - start_offset + 1;
-    
-        thread_ids[i] = i;
-        struct ThreadArgument * thread_argument= (struct ThreadArgument*) malloc (sizeof(struct ThreadArgument));
-        thread_argument->partNumber = i;
-        thread_argument->range_start = start_offset;
-        thread_argument->range_end = end_offset;
-        thread_argument->hostname = hostname;
-        thread_argument->path = path;
-        if (pthread_create(&threads[i], NULL, send_get_range_request(thread_argument), &thread_ids[i]) != 0) {
+        printf("About to create the thread");
+        printf("Start : %zu & end: %zu",start_offset,end_offset);
+        struct ThreadArgument  thread_argument;
+        thread_argument.partNumber = i;
+        thread_argument.range_start = start_offset;
+        thread_argument.range_end = end_offset;
+        thread_argument.hostname = hostname;
+        thread_argument.path = path;
+        // send_get_range_request(thread_argument);
+        if (pthread_create(&threads[i], NULL, send_get_range_request,(void*) &thread_argument ) != 0) {
             perror("Thread creation failed");
             exit(EXIT_FAILURE);
         }
+
     }
 
     // Wait for all threads to finish
     for (int i = 0; i < NUM_THREADS; i++) {
         pthread_join(threads[i], NULL);
+        printf("waiting");
     }
 
     return 0;
