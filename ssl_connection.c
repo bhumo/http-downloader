@@ -32,8 +32,40 @@ struct ThreadArgument{
     size_t range_end;
     char *hostname;
     char *path;
+    int *run_Count;
 
 };
+
+
+void concatenateFiles(char *output_file, int num_parts) {
+    FILE *output = fopen(output_file, "wb"); // Open the output file in binary write mode
+
+    if (output == NULL) {
+        perror("Unable to open the output file");
+        exit(EXIT_FAILURE);
+    }
+
+    for (int i = 0; i < num_parts; i++) {
+        char partFileName[20];
+        snprintf(partFileName, sizeof(partFileName), "part_%d.gif", i);
+
+        FILE *partFile = fopen(partFileName, "rb"); // Open each part file in binary read mode
+
+        if (partFile == NULL) {
+            perror("Unable to open part file");
+            exit(EXIT_FAILURE);
+        }
+        char line[1024];
+        while (fgets(line, sizeof(line), partFile) != NULL) {
+            fwrite(line,1,sizeof(line),output);
+        }
+
+        fclose(partFile); // Close the part file
+    }
+
+    fclose(output); // Close the output file
+}
+
 
 void initialise_OpenSSLLib() {
     // Initialize OpenSSL
@@ -43,6 +75,8 @@ void initialise_OpenSSLLib() {
     ERR_load_crypto_strings();
 
 }
+
+// Function to concatenate multiple files into a single file
 
 struct sockaddr_in * create_server_socket(struct ssl_socket* ssl, int port) {
     // Get the IP Address of the host
@@ -271,7 +305,7 @@ void *send_get_range_request(void *thread_argu){
 	}
 	char response_buffer[1024];
     int bytes_received=0;
-	bytes_received = SSL_read(ssl->connection, response_buffer, sizeof(response_buffer));
+//	bytes_received = SSL_read(ssl->connection, response_buffer, sizeof(response_buffer));
 	// printf("%d\n",SSL_pending(ssl->connection));
 	// printf("%d\n",bytes_received);
     // printf("RB: %lu\n",sizeof(&response_buffer));
@@ -283,7 +317,10 @@ void *send_get_range_request(void *thread_argu){
     // const char *error_string = ERR_error_string(ssl_error, NULL);
     // fprintf(stderr, "SSL_read error: %s\n", error_string);
     char name[20];
+
     sprintf(name, "part_%d.gif\n",thread_argument->partNumber);
+
+    int header_end = 0;
 
     FILE *file = fopen(name,"wb");
 
@@ -291,10 +328,40 @@ void *send_get_range_request(void *thread_argu){
         // response_buffer[bytes_received]='\n';
          printf("%s",response_buffer);
         // printf("BBBBBBBBBBBBBBB:%d    %lu\n",bytes_received,sizeof(response_buffer));
-        fwrite(response_buffer, 1, bytes_received, file);	
-        // printf("**********************************************");
+          // Search for the blank line that separates headers from body
+        for (int i = 0; i < bytes_received; i++) {
+            if (response_buffer[i] == '\r' && response_buffer[i + 1] == '\n' && response_buffer[i + 2] == '\r' && response_buffer[i + 3] == '\n') {
+                header_end = i + 4;
+                break;
+            }
+        }
+ 
+    int content_length = bytes_received;
+    // Now, read and process only the content (body) and remove trailing \r\n
+    if (header_end < bytes_received) {
+        content_length = bytes_received - header_end;
+        if (content_length >= 2 && response_buffer[header_end + content_length - 2] == '\r' && response_buffer[header_end + content_length - 1] == '\n') {
+            content_length -= 2; // Remove trailing \r\n
+
+        }
+
+        int total_file_size = thread_argument->range_end - thread_argument->range_start+1;
+        int image_file_end = header_end;
+        for(int i=header_end;i<content_length & total_file_size>=0;i++){
+            image_file_end++;
+            total_file_size--;
+        }
+        fwrite(response_buffer + header_end, 1, image_file_end,  file);	
     }
+
+    }
+    
+
+    concatenateFiles("xyz.jpg",5);
+
     fclose(file);
+    *thread_argument->run_Count= *thread_argument->run_Count + 1;
+    printf("%d ",*thread_argument->run_Count);
     // Free dynamically allocated memory
     free(get_request);
     close(ssl->client_socket);
@@ -306,4 +373,3 @@ void *send_get_range_request(void *thread_argu){
     // free(thread_argument);
     return NULL;
 }
-
